@@ -59,6 +59,75 @@ describe("doctor empty allowlist policy scan", () => {
     ]);
   });
 
+  it("skips parent-level empty-group-allowlist warning when every account has groupAllowFrom", () => {
+    const warnings = scanEmptyAllowlistPolicyWarnings(
+      {
+        channels: {
+          telegram: {
+            groupPolicy: "allowlist",
+            allowFrom: ["user1"],
+            accounts: {
+              account1: {
+                groupAllowFrom: ["group-user-a"],
+              },
+              account2: {
+                groupAllowFrom: ["group-user-b"],
+              },
+            },
+          },
+        },
+      },
+      { doctorFixCommand: "openclaw doctor --fix" },
+    );
+
+    // No group-allowlist warning because accounts supply their own lists.
+    expect(warnings).toEqual([]);
+  });
+
+  it("still warns on parent-level empty-group-allowlist when no accounts exist", () => {
+    const warnings = scanEmptyAllowlistPolicyWarnings(
+      {
+        channels: {
+          telegram: {
+            groupPolicy: "allowlist",
+          },
+        },
+      },
+      { doctorFixCommand: "openclaw doctor --fix" },
+    );
+
+    expect(warnings).toEqual([
+      '- channels.telegram.groupPolicy is "allowlist" but groupAllowFrom (and allowFrom) is empty — all group messages will be silently dropped. Add sender IDs to channels.telegram.groupAllowFrom or channels.telegram.allowFrom, or set groupPolicy to "open".',
+    ]);
+  });
+
+  it("warns on parent-level empty-group-allowlist when some accounts lack groupAllowFrom", () => {
+    const warnings = scanEmptyAllowlistPolicyWarnings(
+      {
+        channels: {
+          telegram: {
+            groupPolicy: "allowlist",
+            accounts: {
+              account1: {
+                groupAllowFrom: ["group-user-a"],
+              },
+              account2: {
+                groupPolicy: "allowlist",
+                // No groupAllowFrom and no parent allowFrom to fall back on.
+              },
+            },
+          },
+        },
+      },
+      { doctorFixCommand: "openclaw doctor --fix" },
+    );
+
+    // Parent warning is still emitted because not all accounts have groupAllowFrom.
+    const groupWarnings = warnings.filter((w) => w.includes("group messages"));
+    expect(groupWarnings.length).toBeGreaterThanOrEqual(1);
+    expect(groupWarnings.some((w) => w.startsWith("- channels.telegram.groupPolicy"))).toBe(true);
+  });
+
   it("skips disabled channel and account entries", () => {
     const extraWarningsForAccount = vi.fn(({ prefix }) => [`extra:${prefix}`]);
 

@@ -13,6 +13,7 @@ type CollectEmptyAllowlistPolicyWarningsParams = {
   parent?: DoctorAccountRecord;
   prefix: string;
   shouldSkipDefaultEmptyGroupAllowlistWarning?: typeof shouldSkipChannelDoctorDefaultEmptyGroupAllowlistWarning;
+  allAccountsHaveGroupAllowlist?: boolean;
 };
 
 function usesSenderBasedGroupAllowlist(channelName?: string): boolean {
@@ -64,6 +65,13 @@ export function collectEmptyAllowlistPolicyWarningsForAccount(
     undefined;
 
   if (groupPolicy !== "allowlist" || !usesSenderBasedGroupAllowlist(params.channelName)) {
+    return warnings;
+  }
+
+  // When every enabled child account supplies its own non-empty groupAllowFrom,
+  // the parent scope is a pure fallback and should not produce its own
+  // empty-group-allowlist warning.
+  if (params.allAccountsHaveGroupAllowlist) {
     return warnings;
   }
 
