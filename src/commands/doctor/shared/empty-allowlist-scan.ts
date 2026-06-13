@@ -2,6 +2,7 @@
 import type { ChannelDoctorEmptyAllowlistAccountContext } from "../../../channels/plugins/types.adapters.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import type { DoctorAccountRecord, DoctorAllowFromList } from "../types.js";
+import { hasAllowFromEntries } from "./allowlist.js";
 import { collectEmptyAllowlistPolicyWarningsForAccount } from "./empty-allowlist-policy.js";
 import { asObjectRecord } from "./object.js";
 
@@ -68,16 +69,27 @@ export function scanEmptyAllowlistPolicyWarnings(
       }),
     );
     if (params.extraWarningsForAccount) {
-      warnings.push(
-        ...params.extraWarningsForAccount({
-          account,
-          channelName,
-          dmPolicy,
-          effectiveAllowFrom,
-          parent,
-          prefix,
-        }),
+      // When the parent-level default warning is suppressed because every
+      // enabled child account supplies its own effective group allowlist,
+      // also suppress channel-specific extra warnings for the parent scope —
+      // otherwise a plugin (e.g. Telegram) could re-introduce a noisy
+      // parent-level advisory that the shared scan just decided to skip.
+      const isParentScope = !parent;
+      const skipExtraWarningsForParent = Boolean(
+        isParentScope && opts?.allAccountsHaveGroupAllowlist,
       );
+      if (!skipExtraWarningsForParent) {
+        warnings.push(
+          ...params.extraWarningsForAccount({
+            account,
+            channelName,
+            dmPolicy,
+            effectiveAllowFrom,
+            parent,
+            prefix,
+          }),
+        );
+      }
     }
   };
 
@@ -107,17 +119,24 @@ export function scanEmptyAllowlistPolicyWarnings(
       }
     }
 
-    // When every enabled account supplies its own non-empty groupAllowFrom,
-    // the top-level parent record is a pure fallback — skip the parent-level
-    // empty-group-allowlist warning to avoid a false-positive doctor advisory.
+    // When every enabled account supplies its own effective non-empty group
+    // allowlist (groupAllowFrom, or allowFrom where the channel falls back to
+    // it), the top-level parent record is a pure fallback — skip the
+    // parent-level empty-group-allowlist warning to avoid a false-positive
+    // doctor advisory. Use the same `hasAllowFromEntries` predicate as the
+    // warning/runtime helpers so numeric sender IDs and other normalized
+    // entries are counted.
     const allAccountsHaveGroupAllowlist =
       enabledAccounts.length > 0 &&
       enabledAccounts.every(({ account }) => {
         const accountGroupAllowFrom = account.groupAllowFrom as DoctorAllowFromList | undefined;
-        return (
-          Array.isArray(accountGroupAllowFrom) &&
-          accountGroupAllowFrom.some((entry) => entry && typeof entry === "string" && entry.trim())
-        );
+        if (hasAllowFromEntries(accountGroupAllowFrom)) {
+          return true;
+        }
+        // Channels that fall back from groupAllowFrom -> allowFrom at runtime
+        // also satisfy the policy when allowFrom is populated.
+        const accountAllowFrom = account.allowFrom as DoctorAllowFromList | undefined;
+        return hasAllowFromEntries(accountAllowFrom);
       });
 
     checkAccount(channelConfig, `channels.${channelName}`, channelName, undefined, {

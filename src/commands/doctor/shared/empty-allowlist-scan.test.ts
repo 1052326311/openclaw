@@ -128,6 +128,111 @@ describe("doctor empty allowlist policy scan", () => {
     expect(groupWarnings.some((w) => w.startsWith("- channels.telegram.groupPolicy"))).toBe(true);
   });
 
+  it("suppresses parent warning when every account uses numeric sender IDs in groupAllowFrom", () => {
+    // Numeric sender IDs are valid on channels like Telegram/WhatsApp and must
+    // count toward "every account has a group allowlist" — matching runtime
+    // normalization semantics (normalizeStringEntries coerces numbers).
+    const warnings = scanEmptyAllowlistPolicyWarnings(
+      {
+        channels: {
+          telegram: {
+            groupPolicy: "allowlist",
+            accounts: {
+              account1: {
+                groupAllowFrom: [1005001234],
+              },
+              account2: {
+                groupAllowFrom: ["  ", 2006007890],
+              },
+            },
+          },
+        },
+      },
+      { doctorFixCommand: "openclaw doctor --fix" },
+    );
+
+    expect(warnings).toEqual([]);
+  });
+
+  it("suppresses parent warning when every account satisfies via allowFrom fallback", () => {
+    // On channels where groupAllowFrom falls back to allowFrom at runtime,
+    // a populated account-level allowFrom must also satisfy the policy.
+    const warnings = scanEmptyAllowlistPolicyWarnings(
+      {
+        channels: {
+          telegram: {
+            groupPolicy: "allowlist",
+            accounts: {
+              account1: {
+                allowFrom: ["sender-a"],
+              },
+              account2: {
+                allowFrom: ["sender-b"],
+              },
+            },
+          },
+        },
+      },
+      { doctorFixCommand: "openclaw doctor --fix" },
+    );
+
+    expect(warnings).toEqual([]);
+  });
+
+  it("suppresses channel-specific extra warnings on parent scope when all accounts have groupAllowFrom", () => {
+    // Even when a channel plugin supplies its own extraWarningsForAccount hook
+    // (e.g. Telegram), the parent-scope suppression must extend to those
+    // plugin warnings so the false-positive advisory is fully silenced.
+    const extraWarningsForAccount = vi.fn(({ prefix }) => [`extra:${prefix}`]);
+
+    const warnings = scanEmptyAllowlistPolicyWarnings(
+      {
+        channels: {
+          telegram: {
+            groupPolicy: "allowlist",
+            accounts: {
+              account1: {
+                groupAllowFrom: ["group-user-a"],
+              },
+              account2: {
+                groupAllowFrom: ["group-user-b"],
+              },
+            },
+          },
+        },
+      },
+      {
+        doctorFixCommand: "openclaw doctor --fix",
+        extraWarningsForAccount,
+      },
+    );
+
+    // Parent-scope extra warning is suppressed; only account-scope fire.
+    const parentOnlyExtra = warnings.filter(
+      (w) => w.startsWith("extra:") && !w.includes(".accounts."),
+    );
+    expect(parentOnlyExtra).toEqual([]);
+    // Account-scope extra warnings still fire.
+    expect(warnings).toEqual(
+      expect.arrayContaining([
+        "extra:channels.telegram.accounts.account1",
+        "extra:channels.telegram.accounts.account2",
+      ]),
+    );
+    // Account-scope hooks are still invoked.
+    const accountPrefixes = extraWarningsForAccount.mock.calls.map(([opts]) => opts?.prefix);
+    expect(accountPrefixes).toEqual(
+      expect.arrayContaining([
+        "channels.telegram.accounts.account1",
+        "channels.telegram.accounts.account2",
+      ]),
+    );
+    // Parent scope hook is never called.
+    expect(extraWarningsForAccount).not.toHaveBeenCalledWith(
+      expect.objectContaining({ prefix: "channels.telegram" }),
+    );
+  });
+
   it("skips disabled channel and account entries", () => {
     const extraWarningsForAccount = vi.fn(({ prefix }) => [`extra:${prefix}`]);
 
