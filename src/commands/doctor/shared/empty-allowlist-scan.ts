@@ -37,6 +37,7 @@ export function scanEmptyAllowlistPolicyWarnings(
     prefix: string,
     channelName: string,
     parent?: DoctorAccountRecord,
+    opts?: { allAccountsHaveGroupAllowlist?: boolean },
   ) => {
     const accountDm = asObjectRecord(account.dm);
     const parentDm = asObjectRecord(parent?.dm);
@@ -63,6 +64,7 @@ export function scanEmptyAllowlistPolicyWarnings(
         prefix,
         shouldSkipDefaultEmptyGroupAllowlistWarning:
           params.shouldSkipDefaultEmptyGroupAllowlistWarning,
+        allAccountsHaveGroupAllowlist: opts?.allAccountsHaveGroupAllowlist,
       }),
     );
     if (params.extraWarningsForAccount) {
@@ -88,21 +90,43 @@ export function scanEmptyAllowlistPolicyWarnings(
     if (isDisabledRecord(channelConfig)) {
       continue;
     }
-    checkAccount(channelConfig, `channels.${channelName}`, channelName);
-
     const accounts = asObjectRecord(channelConfig.accounts);
-    if (!accounts) {
-      continue;
+    const enabledAccounts: Array<{
+      id: string;
+      account: DoctorAccountRecord;
+    }> = [];
+    if (accounts) {
+      for (const [accountId, account] of Object.entries(accounts)) {
+        if (!account || typeof account !== "object") {
+          continue;
+        }
+        if (isDisabledRecord(account)) {
+          continue;
+        }
+        enabledAccounts.push({ id: accountId, account: account as DoctorAccountRecord });
+      }
     }
-    for (const [accountId, account] of Object.entries(accounts)) {
-      if (!account || typeof account !== "object") {
-        continue;
-      }
-      if (isDisabledRecord(account)) {
-        continue;
-      }
+
+    // When every enabled account supplies its own non-empty groupAllowFrom,
+    // the top-level parent record is a pure fallback — skip the parent-level
+    // empty-group-allowlist warning to avoid a false-positive doctor advisory.
+    const allAccountsHaveGroupAllowlist =
+      enabledAccounts.length > 0 &&
+      enabledAccounts.every(({ account }) => {
+        const accountGroupAllowFrom = account.groupAllowFrom as DoctorAllowFromList | undefined;
+        return (
+          Array.isArray(accountGroupAllowFrom) &&
+          accountGroupAllowFrom.some((entry) => entry && typeof entry === "string" && entry.trim())
+        );
+      });
+
+    checkAccount(channelConfig, `channels.${channelName}`, channelName, undefined, {
+      allAccountsHaveGroupAllowlist,
+    });
+
+    for (const { id: accountId, account } of enabledAccounts) {
       checkAccount(
-        account as DoctorAccountRecord,
+        account,
         `channels.${channelName}.accounts.${accountId}`,
         channelName,
         channelConfig,
