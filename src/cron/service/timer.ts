@@ -1008,35 +1008,46 @@ export function applyJobResult(
         );
       }
     } else if (isJobEnabled(job)) {
-      let naturalNext: number | undefined;
-      try {
-        naturalNext =
-          opts?.preserveSchedule && job.schedule.kind === "every"
-            ? computeNextWithPreservedLastRun(result.endedAt)
-            : previousConsecutiveErrors > 0 && job.schedule.kind === "every"
-              ? computeNextRunAtMs(job.schedule, result.endedAt)
-              : computeJobNextRunAtMs(job, result.endedAt);
-      } catch (err) {
-        // If the schedule expression/timezone throws (croner edge cases),
-        // record the schedule error (auto-disables after repeated failures)
-        // so a persistent throw doesn't cause a MIN_REFIRE_GAP_MS hot loop.
-        recordScheduleComputeError({ state, job, err });
-      }
-      if (job.schedule.kind === "cron") {
-        // Safety net: ensure the next fire is at least MIN_REFIRE_GAP_MS
-        // after the current run ended.  Prevents spin-loops when the
-        // schedule computation lands in the same second due to
-        // timezone/croner edge cases (see #17821).
-        const minNext = result.endedAt + MIN_REFIRE_GAP_MS;
-        job.state.nextRunAtMs = resolveCronNextRunWithLowerBound({
-          state,
-          job,
-          naturalNext,
-          lowerBoundMs: minNext,
-          context: "completion",
-        });
+      if (opts?.isManual) {
+        // Manual runs do not recompute the recurring schedule. Leave
+        // nextRunAtMs unchanged so a pending scheduled error-backoff window
+        // (or the natural next fire) set by the scheduled path is preserved
+        // and the manual run stays non-consuming (#83538).
+        state.deps.log.info(
+          { jobId: job.id, jobName: job.name },
+          "cron: skipping recurring-job schedule recompute for manual run — nextRunAtMs preserved",
+        );
       } else {
-        job.state.nextRunAtMs = naturalNext;
+        let naturalNext: number | undefined;
+        try {
+          naturalNext =
+            opts?.preserveSchedule && job.schedule.kind === "every"
+              ? computeNextWithPreservedLastRun(result.endedAt)
+              : previousConsecutiveErrors > 0 && job.schedule.kind === "every"
+                ? computeNextRunAtMs(job.schedule, result.endedAt)
+                : computeJobNextRunAtMs(job, result.endedAt);
+        } catch (err) {
+          // If the schedule expression/timezone throws (croner edge cases),
+          // record the schedule error (auto-disables after repeated failures)
+          // so a persistent throw doesn't cause a MIN_REFIRE_GAP_MS hot loop.
+          recordScheduleComputeError({ state, job, err });
+        }
+        if (job.schedule.kind === "cron") {
+          // Safety net: ensure the next fire is at least MIN_REFIRE_GAP_MS
+          // after the current run ended.  Prevents spin-loops when the
+          // schedule computation lands in the same second due to
+          // timezone/croner edge cases (see #17821).
+          const minNext = result.endedAt + MIN_REFIRE_GAP_MS;
+          job.state.nextRunAtMs = resolveCronNextRunWithLowerBound({
+            state,
+            job,
+            naturalNext,
+            lowerBoundMs: minNext,
+            context: "completion",
+          });
+        } else {
+          job.state.nextRunAtMs = naturalNext;
+        }
       }
     } else {
       job.state.nextRunAtMs = undefined;
