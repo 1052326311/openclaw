@@ -304,6 +304,60 @@ describe("session cost usage", () => {
     });
   });
 
+  it("estimates known-priced usage when a provider records a zero cost total", async () => {
+    const root = await makeSessionCostRoot("cost-known-pricing-zero-total");
+    const sessionsDir = path.join(root, "agents", "main", "sessions");
+    await fs.mkdir(sessionsDir, { recursive: true });
+
+    const entry = {
+      type: "message",
+      timestamp: new Date().toISOString(),
+      message: {
+        role: "assistant",
+        provider: "deepseek",
+        model: "deepseek-v4-flash",
+        usage: {
+          input: 95_029,
+          output: 100,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 95_129,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+      },
+    };
+
+    await fs.writeFile(
+      path.join(sessionsDir, "sess-1.jsonl"),
+      transcriptText("sess-1", entry),
+      "utf-8",
+    );
+
+    const config = {
+      models: {
+        providers: {
+          deepseek: {
+            models: [
+              {
+                id: "deepseek-v4-flash",
+                cost: { input: 0.14, output: 0.28, cacheRead: 0.028, cacheWrite: 0 },
+              },
+            ],
+          },
+        },
+      },
+    } as unknown as OpenClawConfig;
+
+    await withStateDir(root, async () => {
+      const summary = await loadCostUsageSummary({ days: 30, config });
+      expect(summary.totals.totalTokens).toBe(95_129);
+      expect(summary.totals.totalCost).toBeCloseTo(0.01333206, 8);
+      expect(summary.totals.inputCost).toBeCloseTo(0.01330406, 8);
+      expect(summary.totals.outputCost).toBeCloseTo(0.000028, 8);
+      expect(summary.totals.missingCostEntries).toBe(0);
+    });
+  });
+
   it("treats a pre-upgrade (older-version) durable cache as stale so unpriced usage is rebuilt", async () => {
     const root = await makeSessionCostRoot("cost-cache-upgrade");
     const sessionsDir = path.join(root, "agents", "main", "sessions");

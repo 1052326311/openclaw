@@ -75,10 +75,10 @@ export type {
 } from "./session-cost-usage.types.js";
 
 // Bump when the *meaning* of cached totals changes (not just their inputs), so durable
-// caches written by older builds are rebuilt instead of served stale. Bumped to 4:
-// unpriced (unknown) zero-cost usage now counts toward missingCostEntries, so a warm
-// cache from a pre-change build would otherwise keep reporting the old complete-$0 totals.
-const USAGE_COST_CACHE_VERSION = 4;
+// caches written by older builds are rebuilt instead of served stale. Bumped to 5:
+// known-priced zero-cost usage is now estimated from token totals, so a warm cache from
+// a pre-change build would otherwise keep reporting the old complete-$0 totals.
+const USAGE_COST_CACHE_VERSION = 5;
 const USAGE_COST_CACHE_FILE = ".usage-cost-cache.json";
 const USAGE_COST_CACHE_LOCK_WRITE_GRACE_MS = 10_000;
 const USAGE_COST_CACHE_TEMP_FILE_GRACE_MS = USAGE_COST_CACHE_LOCK_WRITE_GRACE_MS;
@@ -1137,6 +1137,25 @@ const applyCostTotal = (totals: CostUsageTotals, costTotal: number | undefined) 
   totals.totalCost += costTotal;
 };
 
+const estimateUsageCostBreakdown = (
+  usage: NormalizedUsage,
+  cost: ReturnType<typeof resolveModelCostConfig>,
+): CostBreakdown | undefined => {
+  if (!cost || (cost.tieredPricing && cost.tieredPricing.length > 0)) {
+    return undefined;
+  }
+  const usageTotals = computeUsageTokenTotals(usage);
+  const input = (usageTotals.input * cost.input) / 1_000_000;
+  const output = (usageTotals.output * cost.output) / 1_000_000;
+  const cacheRead = (usageTotals.cacheRead * cost.cacheRead) / 1_000_000;
+  const cacheWrite = (usageTotals.cacheWrite * cost.cacheWrite) / 1_000_000;
+  const total = input + output + cacheRead + cacheWrite;
+  if (![input, output, cacheRead, cacheWrite, total].every(Number.isFinite)) {
+    return undefined;
+  }
+  return { total, input, output, cacheRead, cacheWrite };
+};
+
 // A resolved cost config only counts as "known" pricing when it carries at least one
 // positive per-token rate (or tiered pricing). An all-zero config is indistinguishable
 // from "pricing unknown": e.g. codex models ship cost {input:0,output:0,...} in the
@@ -1258,6 +1277,18 @@ async function scanTranscriptFile(params: {
         // instead of the stale flat-rate breakdown from the transport layer.
         entry.costTotal = estimateUsageCost({ usage: entry.usage, cost });
         entry.costBreakdown = undefined;
+      } else if (
+        isModelPricingKnown(cost) &&
+        entry.costTotal === 0 &&
+        computeUsageTokenTotals(entry.usage).totalTokens > 0
+      ) {
+        // Some provider runtimes can record a fabricated zero total even though the
+        // model has positive catalog pricing. Treat that as missing provider cost and
+        // rebuild it from token counts so spend summaries do not report false $0 usage.
+        const estimatedBreakdown = estimateUsageCostBreakdown(entry.usage, cost);
+        entry.costTotal =
+          estimatedBreakdown?.total ?? estimateUsageCost({ usage: entry.usage, cost });
+        entry.costBreakdown = estimatedBreakdown;
       } else if (
         !isModelPricingKnown(cost) &&
         (entry.costTotal === undefined || entry.costTotal === 0) &&
