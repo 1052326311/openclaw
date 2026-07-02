@@ -3965,6 +3965,64 @@ describe("cron service timer regressions", () => {
     expect(job.state.nextRunAtMs).toBe(backoffNextRunAtMs);
   });
 
+  it("#83538: manual skipped run on recurring job preserves pending scheduled error-backoff window", () => {
+    const startedAt = Date.parse("2026-05-19T10:20:00.000Z");
+    const endedAt = startedAt + 100;
+    // A prior scheduled error pushed the next fire into a backoff window far
+    // beyond the natural 60s cadence.
+    const backoffNextRunAtMs = endedAt + 30 * 60_000;
+    const cooldownMs = startedAt - 30_000;
+    const state = createCronServiceState({
+      cronEnabled: true,
+      storePath: "/tmp/cron-83538-manual-skipped-preserves-backoff.json",
+      log: noopLogger,
+      nowMs: () => endedAt,
+      enqueueSystemEvent: vi.fn(),
+      requestHeartbeat: vi.fn(),
+      runIsolatedAgentJob: createDefaultIsolatedRunner(),
+      cronConfig: {
+        failureAlert: {
+          enabled: true,
+          after: 1,
+          includeSkipped: true,
+        },
+      },
+    });
+    const job = createIsolatedRegressionJob({
+      id: "manual-skipped-preserves-backoff",
+      name: "recurring job",
+      scheduledAt: startedAt,
+      schedule: {
+        kind: "every",
+        everyMs: 60_000,
+        anchorMs: startedAt - 60_000,
+      },
+      payload: { kind: "agentTurn", message: "ping" },
+      state: {
+        nextRunAtMs: backoffNextRunAtMs,
+        consecutiveErrors: 2,
+        consecutiveSkipped: 4,
+        lastFailureAlertAtMs: cooldownMs,
+      },
+    });
+
+    const shouldDelete = applyJobResult(
+      state,
+      job,
+      { status: "skipped", error: "lanes busy", startedAt, endedAt },
+      { isManual: true },
+    );
+
+    expect(shouldDelete).toBe(false);
+    expect(job.enabled).toBe(true);
+    // Manual skipped runs must not clear the pending scheduled backoff window,
+    // mutate retry/skip counters, or reset alert cooldown state.
+    expect(job.state.nextRunAtMs).toBe(backoffNextRunAtMs);
+    expect(job.state.consecutiveErrors).toBe(2);
+    expect(job.state.consecutiveSkipped).toBe(4);
+    expect(job.state.lastFailureAlertAtMs).toBe(cooldownMs);
+  });
+
   it("manual error run does not increment consecutiveErrors (#83933)", () => {
     const startedAt = Date.parse("2026-05-20T10:00:00.000Z");
     const endedAt = startedAt + 100;
