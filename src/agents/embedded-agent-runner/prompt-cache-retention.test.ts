@@ -85,6 +85,44 @@ describe("prompt cache retention", () => {
     ).toBeUndefined();
   });
 
+  it("passes explicit cacheRetention through for LiteLLM-proxied Anthropic models", () => {
+    expect(
+      resolveCacheRetention(
+        { cacheRetention: "long" },
+        "litellm",
+        "openai-completions",
+        "anthropic/claude-sonnet-4.6",
+      ),
+    ).toBe("long");
+    expect(
+      resolveCacheRetention(
+        { cacheRetention: "short" },
+        "litellm",
+        "openai-completions",
+        "claude-3-5-sonnet-latest",
+      ),
+    ).toBe("short");
+    expect(
+      resolveCacheRetention(
+        { cacheRetention: "none" },
+        "litellm",
+        "openai-completions",
+        "anthropic/claude-sonnet-4.6",
+      ),
+    ).toBe("none");
+  });
+
+  it("does not default cacheRetention for LiteLLM-proxied Anthropic models", () => {
+    expect(
+      resolveCacheRetention(
+        undefined,
+        "litellm",
+        "openai-completions",
+        "anthropic/claude-sonnet-4.6",
+      ),
+    ).toBeUndefined();
+  });
+
   it("returns undefined for openai-completions without explicit cacheRetention", () => {
     // Without an explicit user choice, openai-completions providers fall back
     // to the transport-level default ("short") rather than receiving a

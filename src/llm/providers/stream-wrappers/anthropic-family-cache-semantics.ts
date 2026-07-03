@@ -13,6 +13,11 @@ export function isAnthropicModelRef(modelId: string): boolean {
   return normalizeLowercaseStringOrEmpty(modelId).startsWith("anthropic/");
 }
 
+export function isClaudeModelRef(modelId: string): boolean {
+  const normalized = normalizeLowercaseStringOrEmpty(modelId);
+  return normalized.startsWith("anthropic/claude") || normalized.startsWith("claude-");
+}
+
 /** Matches Application Inference Profile ARNs across all AWS partitions with Bedrock. */
 const BEDROCK_APP_INFERENCE_PROFILE_ARN_RE = /^arn:aws(-cn|-us-gov)?:bedrock:/;
 
@@ -94,6 +99,15 @@ export function resolveAnthropicCacheRetentionFamily(params: {
     normalizedProvider !== "amazon-bedrock" &&
     params.hasExplicitCacheConfig &&
     params.modelApi === "anthropic-messages"
+  ) {
+    return "custom-anthropic-api";
+  }
+  if (
+    normalizedProvider === "litellm" &&
+    params.hasExplicitCacheConfig &&
+    params.modelApi === "openai-completions" &&
+    typeof params.modelId === "string" &&
+    isClaudeModelRef(params.modelId)
   ) {
     return "custom-anthropic-api";
   }

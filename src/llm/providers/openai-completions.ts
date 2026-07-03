@@ -58,6 +58,7 @@ import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copi
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.js";
 import { mapOpenAIStopReason } from "./openai-stop-reason.js";
 import { buildBaseOptions } from "./simple-options.js";
+import { isClaudeModelRef } from "./stream-wrappers/anthropic-family-cache-semantics.js";
 import { describeToolResultMediaPlaceholder, extractToolResultText } from "./tool-result-text.js";
 import { transformMessages } from "./transform-messages.js";
 
@@ -1329,7 +1330,10 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
   const isDeepSeek = provider === "deepseek" || baseUrl.includes("deepseek.com");
   const isXiaomi = provider === "xiaomi" || baseUrl.includes("xiaomimimo.com");
   const cacheControlFormat =
-    provider === "openrouter" && model.id.startsWith("anthropic/") ? "anthropic" : undefined;
+    (provider === "openrouter" && model.id.startsWith("anthropic/")) ||
+    (provider === "litellm" && isClaudeModelRef(model.id))
+      ? "anthropic"
+      : undefined;
 
   return {
     supportsStore: !isNonStandard,
