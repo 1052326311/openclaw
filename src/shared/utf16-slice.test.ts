@@ -23,8 +23,9 @@ describe("sliceUtf16Safe", () => {
     expect(sliceUtf16Safe("hello", 0, 10)).toBe("hello");
   });
 
-  it("swaps start and end when start > end", () => {
-    expect(sliceUtf16Safe("hello", 3, 1)).toBe("el");
+  it("returns empty string when normalized end is before start", () => {
+    expect(sliceUtf16Safe("hello", 3, 1)).toBe("");
+    expect(sliceUtf16Safe("hello", -1, -3)).toBe("");
   });
 
   it("preserves emoji with surrogate pairs", () => {
