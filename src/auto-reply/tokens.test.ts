@@ -307,6 +307,13 @@ describe("isSilentReplyPrefixText", () => {
     expect(isSilentReplyPrefixText("HEARTBEAT_", "HEARTBEAT_OK")).toBe(true);
   });
 
+  it("matches custom token prefixes that contain digits or punctuation", () => {
+    expect(isSilentReplyPrefixText("NOREPLY2", "NOREPLY2")).toBe(true);
+    expect(isSilentReplyPrefixText("NOREPLY2_", "NOREPLY2_OK")).toBe(true);
+    expect(isSilentReplyPrefixText("NO-", "NO-ANSWER")).toBe(true);
+    expect(isSilentReplyPrefixText("NO-A", "NO-ANSWER")).toBe(true);
+  });
+
   it("rejects non-prefixes and mixed characters", () => {
     expect(isSilentReplyPrefixText("NO_X")).toBe(false);
     expect(isSilentReplyPrefixText("NO_REPLY more")).toBe(false);

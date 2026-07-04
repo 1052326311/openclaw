@@ -310,7 +310,7 @@ export function isSilentReplyPrefixText(
   if (normalized.length < 2) {
     return false;
   }
-  if (/[^A-Z_]/.test(normalized)) {
+  if (/\s/.test(normalized)) {
     return false;
   }
   const tokenUpper = token.toUpperCase();
@@ -318,6 +318,9 @@ export function isSilentReplyPrefixText(
     return false;
   }
   if (normalized.includes("_")) {
+    return true;
+  }
+  if (/[^A-Z]/.test(normalized)) {
     return true;
   }
   // Keep underscore guard for generic tokens to avoid suppressing unrelated
