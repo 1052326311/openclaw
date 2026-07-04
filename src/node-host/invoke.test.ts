@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { GatewayClient } from "../gateway/client.js";
 import { withEnvAsync } from "../test-utils/env.js";
 import type { SkillBinsProvider } from "./invoke-types.js";
-import { handleInvoke } from "./invoke.js";
+import { buildExecEventPayload, handleInvoke } from "./invoke.js";
 
 describe("node host invoke", () => {
   it.runIf(process.platform !== "win32")(
@@ -188,5 +188,18 @@ describe("node host invoke", () => {
       execPolicy?: { security?: string; ask?: string };
     };
     expect(payload.execPolicy).toEqual({ security: "allowlist", ask: "on-miss" });
+  });
+
+  it("keeps truncated exec event output well-formed when the tail starts inside a surrogate pair", () => {
+    const payload = buildExecEventPayload({
+      sessionKey: "agent:main:main",
+      runId: "run-1",
+      host: "node",
+      command: "emoji",
+      output: `${"😀".repeat(10000)}x`,
+    });
+
+    expect(payload.output).toContain("... (truncated) ");
+    expect(payload.output?.isWellFormed()).toBe(true);
   });
 });

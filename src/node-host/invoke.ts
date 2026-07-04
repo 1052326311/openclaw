@@ -37,6 +37,7 @@ import {
   decodeWindowsOutputBuffer,
   resolveWindowsConsoleEncoding,
 } from "../infra/windows-encoding.js";
+import { sliceUtf16Safe } from "../shared/utf16-slice.js";
 import {
   buildSystemRunApprovalPlan,
   handleSystemRunInvoke,
@@ -230,7 +231,7 @@ function truncateOutput(raw: string, maxChars: number): { text: string; truncate
   if (raw.length <= maxChars) {
     return { text: raw, truncated: false };
   }
-  return { text: `... (truncated) ${raw.slice(raw.length - maxChars)}`, truncated: true };
+  return { text: `... (truncated) ${sliceUtf16Safe(raw, -maxChars)}`, truncated: true };
 }
 
 export function decodeCapturedOutputBuffer(params: {
@@ -409,7 +410,7 @@ async function handleSystemWhich(params: SystemWhichParams, env?: Record<string,
   return { bins: found };
 }
 
-function buildExecEventPayload(payload: ExecEventPayload): ExecEventPayload {
+export function buildExecEventPayload(payload: ExecEventPayload): ExecEventPayload {
   if (!payload.output) {
     return payload;
   }
