@@ -5,13 +5,21 @@ import {
   AgentDeletionCommitUncertainError,
 } from "../../agents/agent-lifecycle-registry.js";
 import {
+  deleteSessionEntryLifecycle,
+  loadExactSessionEntry,
+} from "../../config/sessions/session-accessor.js";
+import { formatErrorMessage } from "../../infra/errors.js";
+import { getSessionWorkAdmissionRelease } from "../../sessions/session-lifecycle-admission.js";
+import {
   isCronJobActive,
   noteActiveCronJobRemoval,
   noteActiveCronJobScheduleMutation,
   noteActiveCronJobTriggerMutation,
 } from "../active-jobs.js";
+import { resolveCronAgentSessionKey } from "../isolated-agent/session-key.js";
 import { cronSchedulingInputsEqual } from "../schedule-identity.js";
 import { deleteCronJobScratch } from "../scratch-store.js";
+import { isDetachedCronSessionTarget } from "../session-target.js";
 import { removeStaleCronJobFamilyRows } from "../store.js";
 import { createCronStreamSourceIdentity, cronStreamScheduleKey } from "../stream-schedule.js";
 import { normalizeCronTaskRunJobId } from "../task-run-history.js";
@@ -48,6 +56,80 @@ import {
   warnIfDisabled,
 } from "./store.js";
 import { armTimer } from "./timer.js";
+
+async function cleanupRemovedCronSession(state: CronServiceState, job: CronJob): Promise<void> {
+  if (!isDetachedCronSessionTarget(job.sessionTarget)) {
+    return;
+  }
+  const agentId = resolveEffectiveJobAgentId(job, resolveCurrentDefaultAgentId(state));
+  const storePath = state.deps.resolveSessionStorePath?.(agentId) ?? state.deps.sessionStorePath;
+  if (!storePath) {
+    return;
+  }
+  const sessionKey = resolveCronAgentSessionKey({
+    agentId,
+    sessionKey: `cron:${job.id}`,
+  });
+  const removedEntry = loadExactSessionEntry({
+    agentId,
+    sessionKey,
+    storePath,
+    readConsistency: "latest",
+  })?.entry;
+  if (!removedEntry) {
+    return;
+  }
+  const cleanup = async () => {
+    for (;;) {
+      const entry = loadExactSessionEntry({
+        agentId,
+        sessionKey,
+        storePath,
+        readConsistency: "latest",
+      })?.entry;
+      const sameGeneration =
+        entry?.sessionId === removedEntry.sessionId &&
+        entry?.lifecycleRevision === removedEntry.lifecycleRevision;
+      if (!entry || !sameGeneration) {
+        return;
+      }
+      const release = getSessionWorkAdmissionRelease({
+        scope: storePath,
+        identities: [sessionKey, entry.sessionId],
+      });
+      if (release) {
+        await release;
+        continue;
+      }
+      await deleteSessionEntryLifecycle({
+        agentId,
+        archiveTranscript: true,
+        expectedEntry: entry,
+        expectedLifecycleRevision: entry.lifecycleRevision,
+        expectedSessionId: entry.sessionId,
+        expectedUpdatedAt: entry.updatedAt,
+        requireWriteSuccess: true,
+        storePath,
+        target: { canonicalKey: sessionKey, storeKeys: [sessionKey] },
+      });
+      return;
+    }
+  };
+  const deferred = getSessionWorkAdmissionRelease({
+    scope: storePath,
+    identities: [sessionKey, removedEntry.sessionId],
+  });
+  if (deferred) {
+    void cleanup().catch((error: unknown) => {
+      state.deps.log.warn(
+        { jobId: job.id, err: formatErrorMessage(error) },
+        "cron: deferred session cleanup failed",
+      );
+    });
+    return;
+  }
+  await cleanup();
+}
 
 async function resolveConfiguredChannelsForValidation(
   state: CronServiceState,
@@ -433,7 +515,8 @@ export async function remove(
   id: string,
   opts?: { systemOwned?: boolean },
 ) {
-  return await locked(state, async () => {
+  let removedJobForCleanup: CronJob | undefined;
+  const result = await locked(state, async () => {
     warnIfDisabled(state, "remove");
     await ensureLoaded(state, { skipRecompute: true });
     const before = state.store?.jobs.length ?? 0;
@@ -463,6 +546,7 @@ export async function remove(
       suppressScheduledJobId: id,
     });
     if (removed) {
+      removedJobForCleanup = removedJob;
       noteActiveCronJobRemoval(id);
       try {
         deleteCronJobScratch(state.deps.storePath, id);
@@ -478,6 +562,19 @@ export async function remove(
     }
     return { ok: true, removed } as const;
   });
+  if (removedJobForCleanup) {
+    try {
+      await cleanupRemovedCronSession(state, removedJobForCleanup);
+    } catch (error) {
+      // The job deletion is already durable. Session cleanup is guarded and
+      // retry-safe, so a failure must not turn the committed remove into an API error.
+      state.deps.log.warn(
+        { jobId: id, err: formatErrorMessage(error) },
+        "cron: session cleanup failed",
+      );
+    }
+  }
+  return result;
 }
 
 /** Remove one agent's jobs while holding the cron lock across an external roster commit. */
