@@ -192,6 +192,32 @@ automations:
     message: Summarize active incidents.
 ```
 
+For a stdio MCP server, provide `command` and optional string `args`;
+`transport: stdio` is optional. Package-manager commands must pin an exact
+package version, as in the `npx` example above. Each `env` value must be an exact
+unresolved `${ENV_VAR}` reference, not a literal value or interpolated text.
+
+Remote MCP servers require both `url` and an explicit `transport` of `sse` or
+`streamable-http`. Add `auth: oauth` when the server requires OAuth:
+
+```yaml
+mcpServers:
+  remote-docs:
+    url: https://example.com/mcp
+    transport: streamable-http
+    auth: oauth
+```
+
+Remote URLs must use HTTPS, except HTTP on an exact loopback host (`localhost`,
+`127.0.0.1`, or `[::1]`), and cannot contain user information or fragments.
+
+Template `mcpServers` declarations use a portable subset of the
+[native MCP configuration](/gateway/config-extensions#mcp). Native fields such
+as `headers`, `oauth` options, `sslVerify`, `clientCert`, and `clientKey` are not
+accepted in `CLAW.md`; neither is the native `type: http` alias. Keep host-specific
+setup in the receiving OpenClaw installation. Manifest validation checks the
+declaration; it does not connect to the server or authorize OAuth.
+
 A bundled skill folder must contain a valid root `SKILL.md`. Add installs that
 folder under the new agent's ordinary workspace `skills/` directory, using its
 native skill identity. Supporting files are included automatically, including
